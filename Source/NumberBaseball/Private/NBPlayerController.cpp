@@ -17,7 +17,8 @@ void ANBPlayerController::BeginPlay()
     if (ChatInputWidgetClass)
     {
         ChatInputWidget = CreateWidget<UNBChatInput>(
-            this, ChatInputWidgetClass);
+            this, ChatInputWidgetClass
+        );
 
         if (ChatInputWidget)
         {
@@ -26,10 +27,9 @@ void ANBPlayerController::BeginPlay()
             bShowMouseCursor = true;
 
             FInputModeUIOnly InputMode;
-            InputMode.SetWidgetToFocus(
-                ChatInputWidget->TakeWidget());
-
             SetInputMode(InputMode);
+
+            ChatInputWidget->FocusChatInput();
         }
     }
 }
@@ -38,7 +38,9 @@ void ANBPlayerController::ServerRPC_SendChatMessage_Implementation(
     const FString& Message)
 {
     ANBGameModeBase* GameMode =
-        Cast<ANBGameModeBase>(UGameplayStatics::GetGameMode(this));
+        Cast<ANBGameModeBase>(
+            UGameplayStatics::GetGameMode(this)
+        );
 
     ANBPlayerState* NBPlayerState =
         GetPlayerState<ANBPlayerState>();
@@ -48,35 +50,51 @@ void ANBPlayerController::ServerRPC_SendChatMessage_Implementation(
         return;
     }
 
-    // 게임 종료 후 초기화 대기
+    // 게임 종료 후 재시작 대기
     if (GameMode->IsGameFinished())
     {
-        ClientRPC_ShowResult(TEXT("Game is restarting. Please wait!"));
+        ClientRPC_ShowResult(
+            TEXT("Game is restarting. Please wait!")
+        );
         return;
     }
 
     // 입력값 검증
     if (!GameMode->IsValidGuess(Message))
     {
-        ClientRPC_ShowResult(TEXT("Invalid Guess! Enter 3 unique digits (1-9)."));
+        ClientRPC_ShowResult(
+            TEXT("Invalid Guess! Enter 3 unique digits (1-9).")
+        );
         return;
     }
 
     // 시도 횟수 제한
     if (!NBPlayerState->CanAttempt())
     {
-        ClientRPC_ShowResult(TEXT("No attempts remaining!"));
+        ClientRPC_ShowResult(
+            TEXT("No attempts remaining!")
+        );
         return;
     }
 
-    // 시도 횟수 증가
+    // 유효한 입력일 때만 횟수 증가
     NBPlayerState->AddAttempt();
 
-    // 서버에서 스트라이크 / 볼 판정
+    // 서버에서 숫자 판정
     const FString Result = GameMode->JudgeGuess(Message);
 
-    // 플레이어에게 판정 결과와 시도 횟수 전송
-    const FString ResultMessage = FString::Printf(
+    // 판정 결과를 해당 플레이어에게 전달
+    ClientRPC_ShowGuessResult(
+        Message,
+        Result,
+        NBPlayerState->GetCurrentAttempts(),
+        NBPlayerState->GetMaxAttempts()
+    );
+
+    // 서버 로그 유지
+    UE_LOG(
+        LogTemp,
+        Warning,
         TEXT("%s -> %s | Attempts: %d/%d"),
         *Message,
         *Result,
@@ -84,24 +102,32 @@ void ANBPlayerController::ServerRPC_SendChatMessage_Implementation(
         NBPlayerState->GetMaxAttempts()
     );
 
-    ClientRPC_ShowResult(ResultMessage);
-
-    UE_LOG(
-        LogTemp,
-        Warning,
-        TEXT("%s"),
-        *ResultMessage
-    );
-
-    // 승리 판정
+    // 승리 처리
     if (Result == TEXT("3S 0B"))
     {
         GameMode->HandleWin(this);
         return;
     }
 
-    // 무승부 판정
+    // 무승부 확인
     GameMode->CheckDraw();
+}
+
+void ANBPlayerController::ClientRPC_ShowGuessResult_Implementation(
+    const FString& Guess,
+    const FString& Result,
+    int32 CurrentAttempts,
+    int32 MaxAttempts)
+{
+    if (ChatInputWidget)
+    {
+        ChatInputWidget->ShowGuessResult(
+            Guess,
+            Result,
+            CurrentAttempts,
+            MaxAttempts
+        );
+    }
 }
 
 void ANBPlayerController::ClientRPC_ShowResult_Implementation(
@@ -118,6 +144,11 @@ void ANBPlayerController::ClientRPC_ShowGameMessage_Implementation(
 {
     if (ChatInputWidget)
     {
+        if (Message == TEXT("NEW GAME STARTED!"))
+        {
+            ChatInputWidget->ClearResult();
+        }
+
         ChatInputWidget->ShowGameMessage(Message);
     }
 }
